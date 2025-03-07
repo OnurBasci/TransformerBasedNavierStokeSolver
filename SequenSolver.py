@@ -4,7 +4,7 @@ import torch.nn as nn
 from model import Transolver_Structured_Mesh2D_Encoder
 import scipy.io as scio
 import matplotlib.pyplot as plt
-from phi.flow import *
+#from phi.flow import *
 from einops import rearrange
 from utils.testloss import TestLoss
 import os
