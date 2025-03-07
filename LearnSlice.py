@@ -250,10 +250,10 @@ def train(eval = False):
                                               batch_size=batch_size, shuffle=False)
     
     #get model
-    transolver_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\codes\\Transolver\\model_weights\\encoder_ep20_head_1.pt"
+    transolver_path = "./sequential_checkpoints\\encoder_ep20_head_1.pt"
     sequen_solver = SequenSolver(transolver_path, T=10, H=64, W=64, M=16, C=32, B=1, layers=8).cuda()
     
-    SequenSolver_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\tokenizer_ep10_sim10_2.pt"
+    SequenSolver_path = "./sequential_checkpoints\\tokenizer_ep10_sim10_2.pt"
     sequen_solver.load_state_dict(torch.load(SequenSolver_path, weights_only=True), strict=False)
     
     #freeze sequenSolver
