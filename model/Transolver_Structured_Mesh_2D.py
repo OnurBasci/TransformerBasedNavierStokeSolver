@@ -3,7 +3,8 @@ import numpy as np
 import torch.nn as nn
 from timm.models.layers import trunc_normal_
 from model.Embedding import timestep_embedding
-from model.Physics_Attention import Physics_Attention_Structured_Mesh_2D
+from model.Physics_Attention import Physics_Attention_Structured_Mesh_2D, My_Physics_Attention
+from einops import rearrange
 
 ACTIVATION = {'gelu': nn.GELU, 'tanh': nn.Tanh, 'sigmoid': nn.Sigmoid, 'relu': nn.ReLU, 'leaky_relu': nn.LeakyReLU(0.1),
               'softplus': nn.Softplus, 'ELU': nn.ELU, 'silu': nn.SiLU}
@@ -51,7 +52,7 @@ class Transolver_block(nn.Module):
             out_dim=1,
             slice_num=32,
             H=85,
-            W=85
+            W=85,
     ):
         super().__init__()
         self.last_layer = last_layer
@@ -72,6 +73,50 @@ class Transolver_block(nn.Module):
             return self.mlp2(self.ln_3(fx))
         else:
             return fx
+
+
+
+class Transolver_Encoder_block(nn.Module):
+    """Transformer encoder block."""
+
+    def __init__(
+            self,
+            num_heads: int,
+            hidden_dim: int,
+            dropout: float,
+            act='gelu',
+            mlp_ratio=4,
+            last_layer=False,
+            out_dim=1,
+            slice_num=32,
+            H=85,
+            W=85,
+            id = 0
+    ):
+        super().__init__()
+        self.last_layer = last_layer
+        self.id = id
+        self.ln_1 = nn.LayerNorm(hidden_dim)
+        self.Attn = Physics_Attention_Structured_Mesh_2D(hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
+                                                         dropout=dropout, slice_num=slice_num, H=H, W=W)
+
+        self.ln_2 = nn.LayerNorm(hidden_dim)
+        self.mlp = MLP(hidden_dim, hidden_dim * mlp_ratio, hidden_dim, n_layers=0, res=False, act=act)
+        if self.last_layer:
+            self.ln_3 = nn.LayerNorm(hidden_dim)
+            self.mlp2 = nn.Linear(hidden_dim, out_dim)
+
+    def forward(self, fx):
+        if self.last_layer:
+            print(f"old fx {fx}")
+            #print(f"new fx {self.Attn(self.ln_1(fx))}")
+        fx = self.Attn(self.ln_1(fx)) + fx
+        fx = self.mlp(self.ln_2(fx)) + fx
+        if self.last_layer:
+            return self.mlp2(self.ln_3(fx))
+        else:
+            return fx
+
 
 
 class Model(nn.Module):
@@ -118,8 +163,8 @@ class Model(nn.Module):
                                                       slice_num=slice_num,
                                                       H=H,
                                                       W=W,
-                                                      last_layer=(_ == n_layers - 1))
-                                     for _ in range(n_layers)])
+                                                      last_layer=(i == n_layers - 1))
+                                     for i in range(n_layers)])
         self.initialize_weights()
         self.placeholder = nn.Parameter((1 / (n_hidden)) * torch.rand(n_hidden, dtype=torch.float))
 
@@ -149,27 +194,18 @@ class Model(nn.Module):
         gridy = gridy.reshape(1, 1, self.ref, 1).repeat([batchsize, self.ref, 1, 1])
         grid_ref = torch.cat((gridx, gridy), dim=-1).cuda()  # B H W 8 8 2
 
-        print(f"grid shape {grid[:, :, :, :].shape}")
-        print(f"grid with none {grid[:, :, :, None, None, :].shape}")
-
-        print(f"grid ref shape {grid_ref[:, :, :, :].shape}")
-        print(f"grid with none {grid_ref[:, None, None, :, :, :].shape}")
-
-        print(f"diff size {(grid[:, :, :, None, None, :] - grid_ref[:, None, None, :, :, :]).shape}")
-
         pos = torch.sqrt(torch.sum((grid[:, :, :, None, None, :] - grid_ref[:, None, None, :, :, :]) ** 2, dim=-1)). \
             reshape(batchsize, size_x, size_y, self.ref * self.ref).contiguous()
         
-        print(f"pos {pos.shape}")
         return pos
 
     def forward(self, x, fx, T=None):
         if self.unified_pos:
-            #print(x.shape)
             x = self.pos.repeat(x.shape[0], 1, 1, 1).reshape(x.shape[0], self.H * self.W, self.ref * self.ref)
-            #print(x.shape)
         if fx is not None:
+            print(f"pre fx {fx.shape}")
             fx = torch.cat((x, fx), -1)
+            print(f"post fx {fx.shape}")
             fx = self.preprocess(fx) #the size of fx becomes B * N * C where C is the size of the embedded token from the article
         else:
             fx = self.preprocess(x)
@@ -184,3 +220,4 @@ class Model(nn.Module):
             fx = block(fx)
 
         return fx
+    

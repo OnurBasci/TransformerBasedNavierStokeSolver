@@ -67,6 +67,7 @@ def main():
     train_a = data['u'][:ntrain, ::r, ::r, :T_in][:, :h, :h, :]
     train_a = train_a.reshape(train_a.shape[0], -1, train_a.shape[-1])
     train_a = torch.from_numpy(train_a)
+    
     train_u = data['u'][:ntrain, ::r, ::r, T_in:T + T_in][:, :h, :h, :]
     train_u = train_u.reshape(train_u.shape[0], -1, train_u.shape[-1])
     train_u = torch.from_numpy(train_u)
@@ -140,6 +141,8 @@ def main():
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()  # x : B, 4096, 2  fx : B, 4096  y : B, 4096, T
                 bsz = x.shape[0]
                 for t in range(0, T, step):
+                    print(f"x {x.shape}")
+                    print(f"fx {fx.shape}")
                     im = model(x, fx=fx)
 
                     fx = torch.cat((fx[..., step:], im), dim=-1)
