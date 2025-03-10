@@ -62,8 +62,8 @@ class LearnSlice(nn.Module):
         self.unified_pos = unified_pos
 
         #modules to predict from previous slice
-        #self.weight_projection_form_slice = MLP(self.M + self.M * self.C, (self.M + self.M * self.C)*4, self.M, 1).cuda()
-        self.weight_projection_form_slice = MLP(self.M, self.M*4, self.M, 1).cuda()
+        self.weight_projection_form_slice = MLP(self.M + self.M * self.C, (self.M + self.M * self.C)*4, self.M, 1).cuda()
+        #self.weight_projection_form_slice = MLP(self.M, self.M*4, self.M, 1).cuda()
         
     
     def forward(self, code, spatial_pos):
@@ -100,7 +100,7 @@ class LearnSlice(nn.Module):
         flatten = token.reshape(1, 1, 1, token.shape[2]*token.shape[3]).contiguous() #1, 1, 16 , 32 -> 1, 1, 1 512
         flatten = flatten.expand(-1,-1,prev_slice_weight.shape[2], -1)
         concatenated = torch.cat((prev_slice_weight, flatten), -1)
-        return self.weight_projection_form_slice(prev_slice_weight)
+        return self.weight_projection_form_slice(concatenated)
 
     def get_slice_weight(self, tokens, spatial_pos, fx, use_vorticity=0):
         """
@@ -194,7 +194,7 @@ def buff():
     
 def load_data(ntrain, ntest, Tin, Tout):
     #load data
-    data_path = r"C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\data\\fno\\NavierStokes_V1e-5_N1200_T20\\NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -464,10 +464,11 @@ def train_from_previous(eval=False):
     M = 16
 
     batch_size = 1
-    epochs = 2
+    epochs = 50
     lr = 0.001
     weight_decay = 1e-5
-    save_name = "buff"
+    #save_name = "buff"
+    save_name = "buff2"
     #save_name = "slice_ep2_sim20"
     #save_name = "slice_ep2_sim20_unified"
     #save_name = "slice_ep1_sim20_unified_vort"
@@ -480,8 +481,8 @@ def train_from_previous(eval=False):
     unified_pos = 1
     use_vorticity = 1
 
-    ntrain = 5
-    ntest = 2
+    ntrain = 50
+    ntest = 10
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
 
