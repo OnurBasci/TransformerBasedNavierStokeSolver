@@ -5,6 +5,7 @@ from SequenSolver import SequenSolver
 import scipy.io as scio
 import os
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 ACTIVATION = {'gelu': nn.GELU, 'tanh': nn.Tanh, 'sigmoid': nn.Sigmoid, 'relu': nn.ReLU, 'leaky_relu': nn.LeakyReLU(0.1),
               'softplus': nn.Softplus, 'ELU': nn.ELU, 'silu': nn.SiLU}
@@ -194,7 +195,7 @@ def buff():
     
 def load_data(ntrain, ntest, Tin, Tout):
     #load data
-    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/fno/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -464,25 +465,25 @@ def train_from_previous(eval=False):
     M = 16
 
     batch_size = 1
-    epochs = 50
+    epochs = 5
     lr = 0.001
     weight_decay = 1e-5
-    #save_name = "buff"
-    save_name = "buff2"
+    save_name = "buff"
+    #save_name = "buff2"
     #save_name = "slice_ep2_sim20"
     #save_name = "slice_ep2_sim20_unified"
     #save_name = "slice_ep1_sim20_unified_vort"
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    save_name = "slice_ep4_sim50_unified_vort"
+    #save_name = "slice_ep4_sim50_unified_vort"
     #save_name = "buff"
 
     unified_pos = 1
     use_vorticity = 1
 
-    ntrain = 50
-    ntest = 10
+    ntrain = 10
+    ntest = 2
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
 
@@ -529,6 +530,8 @@ def train_from_previous(eval=False):
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
                 loss = 0
                 diff = 0
+                slice_weights_gt = []
+                prev_slice = 0
                 for t in range(0, Tout):
                     print(t)
                     y = yy[..., t:t+1]
@@ -536,6 +539,7 @@ def train_from_previous(eval=False):
                     #get the original slice
                     sequen_solver.encoder.encode(pos, y)
                     target_slice = sequen_solver.encoder.get_attention_slice()
+                    slice_weights_gt.append(target_slice)
 
                     #get the code from sequen solver
                     code = sequen_solver.get_code(pos, fx, y)
@@ -543,17 +547,37 @@ def train_from_previous(eval=False):
                     #get the previous slice weight
                     prev_slice_weight = sequen_solver.get_last_slice_weight(pos, fx)
 
-                    #get the previous slice weight
-                    prev_slice_weight = sequen_solver.get_last_slice_weight(pos, fx)
-
                     #difference slices (loss from the previous method)
-                    predicted_slice = model.get_slice_weight(code, x, fx, use_vorticity=use_vorticity)
-                    diff += F.mse_loss(predicted_slice, target_slice)
+                    #predicted_slice = model.get_slice_weight(code, x, fx, use_vorticity=use_vorticity)
+                    #diff += F.mse_loss(predicted_slice, target_slice)
 
                     #loss from the original
                     new_slice = model.forward_previous_slice(prev_slice_weight, code)
                     loss += F.mse_loss(new_slice, target_slice)
-                
+                    #slice_weights_gt.append(new_slice)
+                    
+                    """if t > 0:
+                        diff = F.mse_loss(target_slice, prev_slice)
+                        print(f"diffrence prev current {diff}")
+                    #print(prev_slice_weight)
+                    #print(new_slice)
+                    prev_slice = target_slice
+                    np_slice = target_slice.cpu().numpy()[0,0]
+
+                    plt.imshow(np_slice, aspect='auto', cmap='viridis')
+                    plt.colorbar()
+                    plt.title("Tensor Visualization")
+                    plt.xlabel("Columns (16)")
+                    plt.ylabel("Rows (4096)")
+                    plt.show()"""
+
+                    #update fx
+                    sequen_solver.slice_weights = new_slice
+                    decoded = sequen_solver.decode(code)
+                    pred = sequen_solver.mlp2(sequen_solver.ln_3(decoded))
+                    fx = torch.cat((fx[..., 1:], pred), dim=-1)
+
+            
                 print(f"mean diffrence of simulation {diff}")
                 print(f"mean loss of simulation {loss}")
                 mean_loss += loss
@@ -586,11 +610,15 @@ def train_from_previous(eval=False):
                     code = sequen_solver.get_code(pos, fx, y)
 
                     prev_slice_weight = sequen_solver.get_last_slice_weight(pos, fx)
-                    #print(f"prev slice {prev_slice_weight.shape}")
+                    #print(f"prev slice {prev_slice_weight}")
 
                     #for each position and slice we predict the weight
                     new_slice = model.forward_previous_slice(prev_slice_weight, code)
                     loss += F.mse_loss(new_slice, target_slice)
+                
+                    #update fx
+                    fx = torch.cat((fx[..., 1:], y), dim=-1)
+
                 loss_epoch += loss
                 print(f"train loss {loss}")
                 optimizer.zero_grad()

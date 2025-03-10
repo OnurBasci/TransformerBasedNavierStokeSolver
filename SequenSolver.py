@@ -210,7 +210,7 @@ class SequenSolver(nn.Module):
         #get current slice weight from the previous slice weight
         if use_previous_slice:
             prev_slice_weight = self.get_last_slice_weight(spatial_pos, fx)
-            token = 0
+            token = code
             self.slice_weights = learn_slice_model.forward_previous_slice(prev_slice_weight, token)
         else:
             #get the slice weight with the transolver article method
