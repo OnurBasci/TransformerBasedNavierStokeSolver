@@ -87,8 +87,8 @@ def main():
     test = test.reshape(test.shape[0] * test.shape[-1], test.shape[1], 1)
     test = torch.from_numpy(test)
 
-    print(train.shape)
-    print(test.shape)
+    print(f"train data {train.shape}") #simulation * (Tin+tout) , W*H, 1
+    print(f"test data {test.shape}")
 
     x = np.linspace(0, 1, h)
     y = np.linspace(0, 1, h)
@@ -134,7 +134,7 @@ def main():
 
     if eval:
         print("evaluation mode")
-        model.load_state_dict(torch.load("./checkpoints/" + save_name + ".pt"), strict=False)
+        model.load_state_dict(torch.load("./sequential_checkpoints/" + save_name + ".pt"), strict=False)
         model.eval()
         showcase = 0
         id = 0
@@ -142,54 +142,20 @@ def main():
         if not os.path.exists('./results/' + save_name + '/'):
             os.makedirs('./results/' + save_name + '/')
 
-        test_l2_full = 0
         with torch.no_grad():
-            for x, fx, yy in test_loader:
+            test_l2 = 0
+            for x, fx in test_loader:
                 id += 1
                 print(id)
-                x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()  # x : B, 4096, 2  fx : B, 4096  y : B, 4096, T
+                loss = 0
+                x, fx = x.cuda(), fx.cuda()  # x : B, 4096, 2  fx : B, 4096  y : B, 4096, T
                 bsz = x.shape[0]
-                for t in range(0, T, step):
-                    im = model(x, fx=fx)
+                im = model(x, fx=fx)
+                #loss is calculated with the image itself
+                loss += myloss(im.reshape(bsz, -1), fx.reshape(bsz, -1))
 
-                    fx = torch.cat((fx[..., step:], im), dim=-1)
-                    if t == 0:
-                        pred = im
-                    else:
-                        pred = torch.cat((pred, im), -1)
-
-                if id < showcase:
-                    print(id)
-                    plt.figure()
-                    plt.axis('off')
-                    plt.imshow(im[0, :, 0].reshape(64, 64).detach().cpu().numpy(), cmap='coolwarm')
-                    plt.colorbar()
-                    plt.clim(-3, 3)
-                    plt.savefig(
-                        os.path.join('./results/' + save_name + '/',
-                                     "case_" + str(id) + "_pred_" + str(20) + ".pdf"))
-                    plt.close()
-                    # ============ #
-                    plt.figure()
-                    plt.axis('off')
-                    plt.imshow(yy[0, :, t].reshape(64, 64).detach().cpu().numpy(), cmap='coolwarm')
-                    plt.colorbar()
-                    plt.clim(-3, 3)
-                    plt.savefig(
-                        os.path.join('./results/' + save_name + '/', "case_" + str(id) + "_gt_" + str(20) + ".pdf"))
-                    plt.close()
-                    # ============ #
-                    plt.figure()
-                    plt.axis('off')
-                    plt.imshow((im[0, :, 0].reshape(64, 64) - yy[0, :, t].reshape(64, 64)).detach().cpu().numpy(),
-                               cmap='coolwarm')
-                    plt.colorbar()
-                    plt.clim(-2, 2)
-                    plt.savefig(
-                        os.path.join('./results/' + save_name + '/', "case_" + str(id) + "_error_" + str(20) + ".pdf"))
-                    plt.close()
-                test_l2_full += myloss(pred.reshape(bsz, -1), yy.reshape(bsz, -1)).item()
-            print(test_l2_full / ntest)
+                test_l2 += loss.item()
+            print(test_l2 / ntest)
     else:
         for ep in range(args.epochs):
             model.train()
@@ -198,7 +164,7 @@ def main():
 
             print(len(train_loader))
             for i, (x, fx) in enumerate(train_loader):
-                print(f"training data {i}")
+                #print(f"training data {i}")
                 loss = 0
                 x, fx = x.cuda(), fx.cuda()  # x: B,4096,2    fx: B,4096,T   y: B,4096,T
                 bsz = x.shape[0]
@@ -233,15 +199,15 @@ def main():
             print(f"Epoch {ep} , train_step_loss:{train_l2_step / ntrain / (T / step)} , test_step_loss:{test_l2_step / ntest / (T / step)}")
 
             if ep % 100 == 0:
-                if not os.path.exists('./checkpoints'):
-                    os.makedirs('./checkpoints')
+                if not os.path.exists('./sequential_checkpoints'):
+                    os.makedirs('./sequential_checkpoints')
                 print('save model')
-                torch.save(model.state_dict(), os.path.join('./checkpoints', save_name + '.pt'))
+                torch.save(model.state_dict(), os.path.join('./sequential_checkpoints', save_name + '.pt'))
 
-        if not os.path.exists('./checkpoints'):
-            os.makedirs('./checkpoints')
+        if not os.path.exists('./sequential_checkpoints'):
+            os.makedirs('./sequential_checkpoints')
         print('save model')
-        torch.save(model.state_dict(), os.path.join('./checkpoints', save_name + '.pt'))
+        torch.save(model.state_dict(), os.path.join('./sequential_checkpoints', save_name + '.pt'))
 
 
 if __name__ == "__main__":

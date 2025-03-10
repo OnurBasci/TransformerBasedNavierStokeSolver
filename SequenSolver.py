@@ -179,7 +179,7 @@ class SequenSolver(nn.Module):
         output = self.mlp2(self.ln_3(decoded)) # B, N, C -> B, N, 1
         return output
     
-    def solve_with_slice_learner(self, slice_learner_path, spatial_pos, fx, y, unified_pos=0, use_vorticity=0):
+    def solve_with_slice_learner(self, slice_learner_path, spatial_pos, fx, y, unified_pos=0, use_vorticity=0,use_previous_slice=False):
         #get sequential tokens
         B, _, _ = fx.shape
         tokens = torch.from_numpy(np.zeros((B, self.Head, self.T, self.M * self.C), dtype=np.float32)).cuda() # B H T M*C
@@ -207,7 +207,14 @@ class SequenSolver(nn.Module):
         for param in learn_slice_model.parameters():
             param.requires_grad = False
 
-        self.slice_weights = learn_slice_model.get_slice_weight(code, spatial_pos, fx, use_vorticity)
+        #get current slice weight from the previous slice weight
+        if use_previous_slice:
+            prev_slice_weight = self.get_last_slice_weight(spatial_pos, fx)
+            token = 0
+            self.slice_weights = learn_slice_model.forward_previous_slice(prev_slice_weight, token)
+        else:
+            #get the slice weight with the transolver article method
+            self.slice_weights = learn_slice_model.get_slice_weight(code, spatial_pos, fx, use_vorticity)
 
         #slice weight gt
         self.encoder.encode(spatial_pos, y)
@@ -249,6 +256,13 @@ class SequenSolver(nn.Module):
         code = tokens[:,:,-1:,].reshape(B, self.Head, self.M, self.C).contiguous() # B, H, M, C 
 
         return code
+    
+    def get_last_slice_weight(self, spatial_pos, fx):
+
+        #call the encoder of the last frame to generate the slice
+        self.encoder.encode(spatial_pos, fx[:,:,-1:])
+        return self.encoder.get_attention_slice()
+
 
     def attention(self, tokens):
         #print(f"attention input {tokens.shape}")
@@ -342,7 +356,7 @@ def get_grid(batchsize=1):
         return pos    
 
 def inference_example():
-    transolver_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\codes\\Transolver\\model_weights\\encoder_ep20_head_1.pt"
+    transolver_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\codes\\Transolver\\model_weights\\encoder_ep50_head_3.pt"
     
     model = SequenSolver(transolver_path, T=10, H=64, W=64, M=16, C=32, B=1, layers=8).cuda()
 
@@ -461,7 +475,7 @@ def train(eval = False):
                                               batch_size=batch_size, shuffle=False)
     
     #get model
-    transolver_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\codes\\Transolver\\model_weights\\encoder_ep20_head_1.pt"
+    transolver_path = r"C:\Users\onurb\master\PRJ_4ID22_TP\Transolver\PDE-Solving-StandardBenchmark\sequential_checkpoints\encoder_ep20_head_1.pt"
     model = SequenSolver(transolver_path, T=Tin, H=64, W=64, M=16, C=32, B=batch_size, layers=8).cuda()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
@@ -476,7 +490,8 @@ def train(eval = False):
         model.load_state_dict(torch.load("./sequential_checkpoints/" + save_name + ".pt", weights_only=True), strict=False)
         model.eval()
 
-        slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\slice_ep10_sim20_unified_vort.pt"
+        #slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\slice_ep1_sim20_unified_vort.pt"
+        slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\buff.pt"
 
         test_l2_full = 0
         with torch.no_grad():
@@ -487,7 +502,8 @@ def train(eval = False):
                 for t in range(0, Tout):
                     print(f"t {t}")
                     y = yy[..., t:t+1]
-                    im = model.solve_with_slice_learner(slice_learner_path, x, fx, y, unified_pos=1, use_vorticity=use_vorticity)
+                    #im = model(x, fx, y, use_gt=True)
+                    im = model.solve_with_slice_learner(slice_learner_path, x, fx, y, unified_pos=unified_pos, use_vorticity=use_vorticity, use_previous_slice=True)
 
                     fx = torch.cat((fx[..., 1:], im), dim=-1)
                     if t == 0:
