@@ -246,11 +246,11 @@ def train(eval = False):
     weight_decay = 1e-5
     #save_name = "slice_ep2_sim20"
     #save_name = "slice_ep2_sim20_unified"
-    save_name = "slice_ep1_sim20_unified_vort"
+    #save_name = "slice_ep1_sim20_unified_vort"
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    #save_name = "slice_ep4_sim50_unified_vort"
+    save_name = "slice_ep4_sim50_unified_vort"
     #save_name = "buff"
 
     ntrain = 50
@@ -474,7 +474,7 @@ def train_from_previous(eval=False):
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    #save_name = "slice_ep4_sim50_unified_vort"
+    save_name = "slice_ep4_sim50_unified_vort"
     #save_name = "buff"
 
     unified_pos = 1
@@ -638,4 +638,4 @@ def train_from_previous(eval=False):
 
 if __name__ == "__main__":
     #train(eval=True)
-    train_from_previous(eval=False)
+    train_from_previous(eval=True)
