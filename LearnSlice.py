@@ -63,8 +63,8 @@ class LearnSlice(nn.Module):
         self.unified_pos = unified_pos
 
         #modules to predict from previous slice
-        #self.weight_projection_form_slice = MLP(self.M + self.M * self.C, (self.M + self.M * self.C)*4, self.M, 1).cuda()
-        self.weight_projection_form_slice = MLP(self.M, self.M*4, self.M, 1).cuda()
+        self.weight_projection_form_slice = MLP(self.M + self.M * self.C, (self.M + self.M * self.C)*4, self.M, 1).cuda()
+        #self.weight_projection_form_slice = MLP(self.M, self.M*4, self.M, 1).cuda()
         
     
     def forward(self, code, spatial_pos):
@@ -98,10 +98,10 @@ class LearnSlice(nn.Module):
         prev_slice_weight: [1, 1, 4096, 16]
         token: [1, 1, 16, 32]
         """
-        #flatten = token.reshape(1, 1, 1, token.shape[2]*token.shape[3]).contiguous() #1, 1, 16 , 32 -> 1, 1, 1 512
-        #flatten = flatten.expand(-1,-1,prev_slice_weight.shape[2], -1)
-        #concatenated = torch.cat((prev_slice_weight, flatten), -1)
-        return self.weight_projection_form_slice(prev_slice_weight)
+        flatten = token.reshape(1, 1, 1, token.shape[2]*token.shape[3]).contiguous() #1, 1, 16 , 32 -> 1, 1, 1 512
+        flatten = flatten.expand(-1,-1,prev_slice_weight.shape[2], -1)
+        concatenated = torch.cat((prev_slice_weight, flatten), -1)
+        return self.weight_projection_form_slice(concatenated)
 
     def get_slice_weight(self, tokens, spatial_pos, fx, use_vorticity=0):
         """
@@ -251,10 +251,10 @@ def train(eval = False):
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    save_name = "slice_ep4_sim50_unified_vort"
-    #save_name = "buff"
+    #save_name = "slice_ep4_sim50_unified_vort"
+    save_name = "buff"
 
-    ntrain = 50
+    ntrain = 5
     ntest = 2
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
@@ -307,6 +307,7 @@ def train(eval = False):
             for x, fx, yy in test_loader:
                 loss_sim = 0
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
+                original_x = x
                 loss_t = 0
                 for t in range(0, Tout):
                     print(t)
@@ -319,6 +320,16 @@ def train(eval = False):
                     #get the code from sequen solver
                     code = sequen_solver.get_code(pos, fx, y)
 
+                    #GET AND SHOW THE PREDICTED SLICE
+                    """predicted_slice = model.get_slice_weight(code, original_x, fx, use_vorticity=use_vorticity)
+
+                    plt.imshow(predicted_slice.cpu().numpy()[0,0], aspect='auto', cmap='viridis')
+                    plt.colorbar()
+                    plt.title("Tensor Visualization")
+                    plt.xlabel("Columns (16)")
+                    plt.ylabel("Rows (4096)")
+                    plt.show()"""
+
                     #for each position and slice we predict the weight
                     loss = 0
                     for i in range(N):
@@ -327,6 +338,7 @@ def train(eval = False):
                         if use_vorticity:
                             x = torch.cat((pos, fx), -1)
                             x = x[0,i:i+1,:]
+                        
                         w_i = model(code[0,0], x)
                         loss += F.mse_loss(w_i, target_slice[0,0:1,i])
                         #we compute the probabilities of all i andf j
@@ -469,14 +481,14 @@ def train_from_previous(eval=False):
     lr = 0.001
     weight_decay = 1e-5
     #save_name = "buff"
-    save_name = "buff2"
+    #save_name = "buff2"
     #save_name = "slice_ep2_sim20"
     #save_name = "slice_ep2_sim20_unified"
     #save_name = "slice_ep1_sim20_unified_vort"
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    #save_name = "slice_ep4_sim50_unified_vort"
+    save_name = "slice_ep4_sim50_unified_vort"
     #save_name = "buff"
 
     unified_pos = 1
@@ -548,15 +560,15 @@ def train_from_previous(eval=False):
                     prev_slice_weight = sequen_solver.get_last_slice_weight(pos, fx)
 
                     #difference slices (loss from the previous method)
-                    #predicted_slice = model.get_slice_weight(code, x, fx, use_vorticity=use_vorticity)
-                    #diff += F.mse_loss(predicted_slice, target_slice)
+                    predicted_slice = model.get_slice_weight(code, x, fx, use_vorticity=use_vorticity)
+                    diff += F.mse_loss(predicted_slice, target_slice)
 
                     #loss from the original
                     new_slice = model.forward_previous_slice(prev_slice_weight, code)
                     loss += F.mse_loss(new_slice, target_slice)
                     #slice_weights_gt.append(new_slice)
                     
-                    if t > 0:
+                    """if t > 0:
                         diff = F.mse_loss(new_slice, prev_slice)
                         print(f"diffrence prev current {diff}")
                     #print(prev_slice_weight)
@@ -569,7 +581,7 @@ def train_from_previous(eval=False):
                     plt.title("Tensor Visualization")
                     plt.xlabel("Columns (16)")
                     plt.ylabel("Rows (4096)")
-                    plt.show()
+                    plt.show()"""
 
                     #update fx
                     sequen_solver.slice_weights = new_slice
@@ -666,5 +678,5 @@ def train_from_previous(eval=False):
 
 
 if __name__ == "__main__":
-    #train(eval=True)
-    train_from_previous(eval=True)
+    train(eval=False)
+    #train_from_previous(eval=True)
