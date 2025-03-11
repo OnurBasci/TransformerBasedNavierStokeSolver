@@ -161,7 +161,7 @@ def buff():
     pos = torch.tensor(pos, dtype=torch.float).unsqueeze(0).cuda()
 
     #get the data
-    data_path = "/tempory/TransformerBasedNavierStokeSolver/data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = "/tempory/TransformerBasedNavierStokeSolver/data/fno/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
     data = data.reshape(data.shape[0], -1, data.shape[-1])
@@ -195,7 +195,7 @@ def buff():
     
 def load_data(ntrain, ntest, Tin, Tout):
     #load data
-    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/fno/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -556,20 +556,20 @@ def train_from_previous(eval=False):
                     loss += F.mse_loss(new_slice, target_slice)
                     #slice_weights_gt.append(new_slice)
                     
-                    """if t > 0:
-                        diff = F.mse_loss(target_slice, prev_slice)
+                    if t > 0:
+                        diff = F.mse_loss(new_slice, prev_slice)
                         print(f"diffrence prev current {diff}")
                     #print(prev_slice_weight)
                     #print(new_slice)
-                    prev_slice = target_slice
-                    np_slice = target_slice.cpu().numpy()[0,0]
+                    prev_slice = new_slice
+                    np_slice = new_slice.cpu().numpy()[0,0]
 
                     plt.imshow(np_slice, aspect='auto', cmap='viridis')
                     plt.colorbar()
                     plt.title("Tensor Visualization")
                     plt.xlabel("Columns (16)")
                     plt.ylabel("Rows (4096)")
-                    plt.show()"""
+                    plt.show()
 
                     #update fx
                     sequen_solver.slice_weights = new_slice
