@@ -384,7 +384,7 @@ def train(eval = False):
                     code = sequen_solver.get_code(pos, fx, y)
 
                     #for each position and slice we predict the weight
-                    loss = 0
+                    loss = torch.tensor(0.0, device="cuda")
                     #concat_total = torch.from_numpy(np.zeros((N, M, 34), dtype=np.float32)).cuda()  #[N, M, 34]
                     for i in range(N):
                         #loss total
@@ -398,16 +398,16 @@ def train(eval = False):
                             x = x[0,i:i+1,:]
                         w_i = model(code[0,0], x)
                         loss += F.mse_loss(w_i, target_slice[0,0:1,i])
+                        del x, w_i
                     #update fx
-                    if use_vorticity:
-                        fx = torch.cat((fx[..., 1:], y), dim=-1)
+                    fx = torch.cat((fx[..., 1:], y), dim=-1)
                     #loss total
                     #w = model.forward_all(concat_total).unsqueeze(0)
                     #loss += F.mse_loss(w, target_slice)
                     #print(f"w.shape {w.shape}")
                     #print(f"target {target_slice.shape}")
                     loss_t += loss
-                    losses.append(loss)
+                    losses.append(loss.item())
                     print(f"train loss {loss}")
                     optimizer.zero_grad()
                     loss.backward()
@@ -415,6 +415,7 @@ def train(eval = False):
                     scheduler.step()
                 loss_sim = loss_t/Tout
                 loss_epoch += loss_sim
+                torch.cuda.empty_cache()
                 print(f"mean loss sim {loss_sim}")
             loss_epoch /= len(train_loader)
             
