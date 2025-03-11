@@ -195,7 +195,7 @@ def buff():
     
 def load_data(ntrain, ntest, Tin, Tout):
     #load data
-    data_path = r"./data/fno/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -242,7 +242,7 @@ def train(eval = False):
     M = 16
 
     batch_size = 1
-    epochs = 1
+    epochs = 5
     lr = 0.001
     weight_decay = 1e-5
     #save_name = "slice_ep2_sim20"
@@ -252,10 +252,11 @@ def train(eval = False):
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
     #save_name = "slice_ep4_sim50_unified_vort"
-    save_name = "buff"
+    #save_name = "buff"
+    save_name = "slice_ep5_sim50_unified_vort"
 
-    ntrain = 5
-    ntest = 2
+    ntrain = 50
+    ntest = 10
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
 
@@ -489,8 +490,9 @@ def train_from_previous(eval=False):
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    save_name = "slice_ep4_sim50_unified_vort"
+    #save_name = "slice_ep4_sim50_unified_vort"
     #save_name = "buff"
+    save_name = "slice_ep5_sim50_unified_vort"
 
     unified_pos = 1
     use_vorticity = 1
