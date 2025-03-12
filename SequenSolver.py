@@ -9,7 +9,7 @@ from einops import rearrange
 from utils.testloss import TestLoss
 import os
 #from SliceLearner import SliceLearner
-from LearnSlice import LearnSlice
+#from LearnSlice import LearnSlice
 import torch.nn.functional as F
 
 ACTIVATION = {'gelu': nn.GELU, 'tanh': nn.Tanh, 'sigmoid': nn.Sigmoid, 'relu': nn.ReLU, 'leaky_relu': nn.LeakyReLU(0.1),

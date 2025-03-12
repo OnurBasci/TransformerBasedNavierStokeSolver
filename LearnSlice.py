@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torch.nn as nn
-#from SequenSolver import SequenSolver
+from SequenSolver import SequenSolver
 import scipy.io as scio
 import os
 import torch.nn.functional as F
@@ -42,7 +42,7 @@ class LearnSlice(nn.Module):
     """
     this class try to predict slice weight from the learned token w_i,j = f(z_i, p_i)
     """
-    def __init__(self, unified_pos=0, use_vorticity = 0):
+    def __init__(self, unified_pos=0, use_vorticity = 0, use_code_for_vorticity = False):
         super(LearnSlice, self).__init__()
         self.C = 32
         self.N = 4096
@@ -71,10 +71,14 @@ class LearnSlice(nn.Module):
         act='gelu'
         self.H = 64
         self.W = 64
+        self.fundemental = 10
         if self.unified_pos:
-            self.preprocess = MLP(74, 256 * 2, n_hidden, n_layers=0, res=False, act=act).cuda()
+            self.fundemental += 64
         else:
-            self.preprocess = MLP(12, 256 * 2, n_hidden, n_layers=0, res=False, act=act).cuda()
+            self.fundemental += 2
+        if use_code_for_vorticity:
+            self.fundemental += self.M * self.C
+        self.preprocess = MLP(self.fundemental, n_hidden * 2, n_hidden, n_layers=0, res=False, act=act).cuda()
         kernel = 3
         self.in_project_x = nn.Conv2d(n_hidden, n_hidden, kernel, 1, kernel // 2).cuda()
         self.softmax_vort = nn.Softmax(dim=-1).cuda()
@@ -137,13 +141,18 @@ class LearnSlice(nn.Module):
         
         return slice_weight
     
-    def forward_from_vorticity(self, x, fx, T=None):
+    def forward_from_vorticity(self, x, fx, code = None, T=None):
         if fx is not None:
             fx = torch.cat((x, fx), -1)
             fx = self.preprocess(fx) #the size of fx becomes B * N * C where C is the size of the embedded token from the article
         else:
             fx = self.preprocess(x)
             fx = fx + self.placeholder[None, None, :]
+
+        if code is not None:
+            code = code.reshape(code.shape[0], 1 ,code.shape[2]*code.shape[3]).contiguous()
+            code = exp
+            pass
 
         #learn slices
         B, N, C = fx.shape
@@ -228,7 +237,7 @@ def buff():
     
 def load_data(ntrain, ntest, Tin, Tout):
     #load data
-    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/fno/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -265,6 +274,8 @@ def encode_spatial_positionning(ntrain, ntest, unified_pos):
 
     pos_train = pos.repeat(ntrain, 1, 1)
     pos_test = pos.repeat(ntest, 1, 1)
+
+    print(f"pos {pos.shape}")
 
     return pos_train, pos_test, pos
 
@@ -717,8 +728,8 @@ def train_from_vorticity(eval=False):
     N = 4096
     M = 16
 
-    batch_size = 1
-    epochs = 10
+    batch_size = 2
+    epochs = 2
     lr = 0.001
     weight_decay = 1e-5
     save_name = "buff"
@@ -730,12 +741,13 @@ def train_from_vorticity(eval=False):
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
     #save_name = "slice_ep4_sim50_unified_vort"
-    #save_name = "buff"
+    #save_name = "slice_vort_ep10_sim200"
 
     unified_pos = 1
     use_vorticity = 1
+    use_code_for_vorticity = 0
 
-    ntrain = 200
+    ntrain = 10
     ntest = 10
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
@@ -763,7 +775,7 @@ def train_from_vorticity(eval=False):
     for param in sequen_solver.parameters():
         param.requires_grad = False
 
-    model = LearnSlice(unified_pos=unified_pos, use_vorticity=use_vorticity)
+    model = LearnSlice(unified_pos=unified_pos, use_vorticity=use_vorticity, use_code_for_vorticity=use_code_for_vorticity)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
@@ -771,6 +783,8 @@ def train_from_vorticity(eval=False):
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, epochs=epochs,
                                                     steps_per_epoch=(len(train_loader)))
     
+    mse_loss = nn.MSELoss()
+
     if eval:
         print("evaluation mode")
         model.load_state_dict(torch.load("./sequential_checkpoints/" + save_name + ".pt", weights_only=True), strict=False)
@@ -788,17 +802,18 @@ def train_from_vorticity(eval=False):
                     y = yy[..., t:t+1]
 
                     #get the original slice
-                    sequen_solver.encoder.encode(pos, y)
+                    sequen_solver.encoder.encode(x, y)
                     target_slice = sequen_solver.encoder.get_attention_slice()
 
-                    slice_from_vorticity = model.forward_from_vorticity(pos, fx)
-                    loss += F.mse_loss(slice_from_vorticity, target_slice)
-                    #slice_weights_gt.append(new_slice)
-                    
                     #get the code from sequen solver
-                    code = sequen_solver.get_code(pos, fx, y)
+                    code = sequen_solver.get_code(x, fx, y)
 
-                    if t > 0:
+                    slice_from_vorticity = model.forward_from_vorticity(x, fx, code=None)
+                    loss += mse_loss(slice_from_vorticity, target_slice)
+                    #slice_weights_gt.append(new_slice)
+                
+
+                    """if t > 0:
                         diff = F.mse_loss(slice_from_vorticity, prev_slice)
                         print(f"diffrence prev current {diff}")
                     #print(prev_slice_weight)
@@ -821,7 +836,7 @@ def train_from_vorticity(eval=False):
                     plt.title("gt")
                     plt.xlabel("Columns (16)")
                     plt.ylabel("Rows (4096)")
-                    plt.show()
+                    plt.show()"""
 
                     #reconstruct and update fx
                     sequen_solver.slice_weights = slice_from_vorticity
@@ -854,11 +869,15 @@ def train_from_vorticity(eval=False):
                     y = yy[..., t:t+1]
 
                     #get the original slice
-                    sequen_solver.encoder.encode(pos, y)
+                    sequen_solver.encoder.encode(x, y)
                     target_slice = sequen_solver.encoder.get_attention_slice()
                 
-                    slice_from_vorticity = model.forward_from_vorticity(pos, fx)
-                    loss += F.mse_loss(slice_from_vorticity, target_slice)
+                    #get the code from sequen solver
+                    code = sequen_solver.get_code(x, fx, y)
+                    #print(f"code {code.shape}")
+
+                    slice_from_vorticity = model.forward_from_vorticity(x, fx, code=None)
+                    loss += mse_loss(slice_from_vorticity, target_slice)
 
                     #update fx
                     fx = torch.cat((fx[..., 1:], y), dim=-1)
@@ -889,17 +908,26 @@ def train_from_vorticity(eval=False):
                         y = yy[..., t:t+1]
 
                         #get the original slice
-                        sequen_solver.encoder.encode(pos, y)
+                        sequen_solver.encoder.encode(x, y)
                         target_slice = sequen_solver.encoder.get_attention_slice()
 
-                        slice_from_vorticity = model.forward_from_vorticity(pos, fx)
-                        loss += F.mse_loss(slice_from_vorticity, target_slice)
+                        #get the code from sequen solver
+                        code = sequen_solver.get_code(x, fx, y)
+
+                        slice_from_vorticity = model.forward_from_vorticity(x, fx, code=None)
+                        loss += mse_loss(slice_from_vorticity, target_slice)
+
+                        #reconstruct and update fx
+                        sequen_solver.slice_weights = slice_from_vorticity
+                        decoded = sequen_solver.decode(code)
+                        pred = sequen_solver.mlp2(sequen_solver.ln_3(decoded))
+                        fx = torch.cat((fx[..., 1:], pred), dim=-1)
                     
                     
                     print(f"mean loss of a simulation {loss}")
                     overall_loss += loss
                 #overall_loss /= len(test_loader)
-                print(f"overall loss {overall_loss}")
+                print(f"overall loss {overall_loss/len(test_loader)}")
 
 
 if __name__ == "__main__":
