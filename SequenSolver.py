@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from einops import rearrange
 from utils.testloss import TestLoss
 import os
-from SliceLearner import SliceLearner
-#from LearnSlice import LearnSlice
+#from SliceLearner import SliceLearner
+from LearnSlice import LearnSlice
 import torch.nn.functional as F
 
 ACTIVATION = {'gelu': nn.GELU, 'tanh': nn.Tanh, 'sigmoid': nn.Sigmoid, 'relu': nn.ReLU, 'leaky_relu': nn.LeakyReLU(0.1),
@@ -73,7 +73,7 @@ class SequenSolver(nn.Module):
         
         self.encoder.load_state_dict(torch.load(transolver_path, weights_only=True), strict=False)
 
-        self.slice_learner = SliceLearner(space_dim=1, n_hidden=64, fun_dim=T, unified_pos=1, H=64, W=64, slice_num=16)
+        #self.slice_learner = SliceLearner(space_dim=1, n_hidden=64, fun_dim=T, unified_pos=1, H=64, W=64, slice_num=16)
 
         #freeze the model since it is not included in the trainig
         self.encoder.eval()
@@ -179,7 +179,7 @@ class SequenSolver(nn.Module):
         output = self.mlp2(self.ln_3(decoded)) # B, N, C -> B, N, 1
         return output
     
-    def solve_with_slice_learner(self, slice_learner_path, spatial_pos, fx, y, unified_pos=0, use_vorticity=0,use_previous_slice=False):
+    def solve_with_slice_learner(self, slice_learner_path, spatial_pos, fx, y, unified_pos=0, use_vorticity=0,use_previous_slice=False, learn_from_vort = False):
         #get sequential tokens
         B, _, _ = fx.shape
         tokens = torch.from_numpy(np.zeros((B, self.Head, self.T, self.M * self.C), dtype=np.float32)).cuda() # B H T M*C
@@ -212,6 +212,9 @@ class SequenSolver(nn.Module):
             prev_slice_weight = self.get_last_slice_weight(spatial_pos, fx)
             token = code
             self.slice_weights = learn_slice_model.forward_previous_slice(prev_slice_weight, token)
+        elif learn_from_vort:
+            print(f"spatial pos {spatial_pos.shape}")
+            self.slice_weights = learn_slice_model.forward_from_vorticity(spatial_pos, fx)
         else:
             #get the slice weight with the transolver article method
             self.slice_weights = learn_slice_model.get_slice_weight(code, spatial_pos, fx, use_vorticity)
@@ -503,7 +506,7 @@ def train(eval = False):
                     print(f"t {t}")
                     y = yy[..., t:t+1]
                     #im = model(x, fx, y, use_gt=True)
-                    im = model.solve_with_slice_learner(slice_learner_path, x, fx, y, unified_pos=unified_pos, use_vorticity=use_vorticity, use_previous_slice=True)
+                    im = model.solve_with_slice_learner(slice_learner_path, x, fx, y, unified_pos=unified_pos, use_vorticity=use_vorticity, use_previous_slice=True, learn_from_vort=False)
 
                     fx = torch.cat((fx[..., 1:], im), dim=-1)
                     if t == 0:

@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torch.nn as nn
-from SequenSolver import SequenSolver
+#from SequenSolver import SequenSolver
 import scipy.io as scio
 import os
 import torch.nn.functional as F
@@ -65,6 +65,21 @@ class LearnSlice(nn.Module):
         #modules to predict from previous slice
         self.weight_projection_form_slice = MLP(self.M + self.M * self.C, (self.M + self.M * self.C)*4, self.M, 1).cuda()
         #self.weight_projection_form_slice = MLP(self.M, self.M*4, self.M, 1).cuda()
+
+        #modules to predict from vorticity + pos
+        n_hidden = 256
+        act='gelu'
+        self.H = 64
+        self.W = 64
+        if self.unified_pos:
+            self.preprocess = MLP(74, 256 * 2, n_hidden, n_layers=0, res=False, act=act).cuda()
+        else:
+            self.preprocess = MLP(12, 256 * 2, n_hidden, n_layers=0, res=False, act=act).cuda()
+        kernel = 3
+        self.in_project_x = nn.Conv2d(n_hidden, n_hidden, kernel, 1, kernel // 2).cuda()
+        self.softmax_vort = nn.Softmax(dim=-1).cuda()
+        self.in_project_slice = nn.Linear(n_hidden, self.M).cuda()
+        self.temperature = nn.Parameter(torch.ones([1, 1, 1, 1]) * 0.5).cuda()
         
     
     def forward(self, code, spatial_pos):
@@ -121,6 +136,24 @@ class LearnSlice(nn.Module):
             slice_weight[:,:, i, :] = w_i.reshape(1,1, w_i.shape[0], w_i.shape[1]).contiguous()
         
         return slice_weight
+    
+    def forward_from_vorticity(self, x, fx, T=None):
+        if fx is not None:
+            fx = torch.cat((x, fx), -1)
+            fx = self.preprocess(fx) #the size of fx becomes B * N * C where C is the size of the embedded token from the article
+        else:
+            fx = self.preprocess(x)
+            fx = fx + self.placeholder[None, None, :]
+
+        #learn slices
+        B, N, C = fx.shape
+        fx = fx.reshape(B, self.H, self.W, C).contiguous().permute(0, 3, 1, 2).contiguous()  # B C H W
+        x_mid = self.in_project_x(fx).permute(0, 2, 3, 1).contiguous().reshape(B, N, 1, C) \
+            .permute(0, 2, 1, 3).contiguous()  # B H N G
+        slice_weights = self.softmax_vort(
+            self.in_project_slice(x_mid) / torch.clamp(self.temperature, min=0.1, max=5))  # B H N G
+
+        return slice_weights
 
 
 def get_grid(batchsize=1):
@@ -481,7 +514,7 @@ def train_from_previous(eval=False):
     epochs = 50
     lr = 0.001
     weight_decay = 1e-5
-    #save_name = "buff"
+    save_name = "buff"
     #save_name = "buff2"
     #save_name = "slice_ep2_sim20"
     #save_name = "slice_ep2_sim20_unified"
@@ -489,7 +522,7 @@ def train_from_previous(eval=False):
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    save_name = "slice_ep4_sim50_unified_vort"
+    #save_name = "slice_ep4_sim50_unified_vort"
     #save_name = "buff"
 
     unified_pos = 1
@@ -628,7 +661,7 @@ def train_from_previous(eval=False):
                     #for each position and slice we predict the weight
                     new_slice = model.forward_previous_slice(prev_slice_weight, code)
                     loss += F.mse_loss(new_slice, target_slice)
-                
+
                     #update fx
                     fx = torch.cat((fx[..., 1:], y), dim=-1)
 
@@ -678,6 +711,196 @@ def train_from_previous(eval=False):
                 print(f"overall loss {overall_loss}")
 
 
+def train_from_vorticity(eval=False):
+    N = 4096
+    M = 16
+
+    batch_size = 1
+    epochs = 10
+    lr = 0.001
+    weight_decay = 1e-5
+    save_name = "buff"
+    #save_name = "buff2"
+    #save_name = "slice_ep2_sim20"
+    #save_name = "slice_ep2_sim20_unified"
+    #save_name = "slice_ep1_sim20_unified_vort"
+    #save_name = "slice_ep1_sim20_unified_vort2"
+    #save_name = "slice_learner_unified"
+    #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
+    #save_name = "slice_ep4_sim50_unified_vort"
+    #save_name = "buff"
+
+    unified_pos = 1
+    use_vorticity = 1
+
+    ntrain = 200
+    ntest = 10
+    Tin = 10 #the size of the input sequence
+    Tout = 10 #the number of frames to predict
+
+    train_a, train_u, test_a, test_u = load_data(ntrain, ntest, Tin, Tout)
+
+    #spatial positional encoding
+    pos_train, pos_test, pos = encode_spatial_positionning(ntrain, ntest, unified_pos)
+
+    #define loaders
+    train_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(pos_train, train_a, train_u),
+                                               batch_size=batch_size, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(pos_test, test_a, test_u),
+                                              batch_size=batch_size, shuffle=False)
+    
+    #get model
+    transolver_path = "./sequential_checkpoints/encoder_ep20_head_1.pt"
+    sequen_solver = SequenSolver(transolver_path, T=10, H=64, W=64, M=16, C=32, B=1, layers=8).cuda()
+    
+    SequenSolver_path = "./sequential_checkpoints/tokenizer_ep10_sim10_2.pt"
+    sequen_solver.load_state_dict(torch.load(SequenSolver_path, weights_only=True), strict=False)
+    
+    #freeze sequenSolver
+    sequen_solver.eval()
+    for param in sequen_solver.parameters():
+        param.requires_grad = False
+
+    model = LearnSlice(unified_pos=unified_pos, use_vorticity=use_vorticity)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    #for each epoch we have train loader * N * M
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, epochs=epochs,
+                                                    steps_per_epoch=(len(train_loader)))
+    
+    if eval:
+        print("evaluation mode")
+        model.load_state_dict(torch.load("./sequential_checkpoints/" + save_name + ".pt", weights_only=True), strict=False)
+        model.eval()
+        print(f"TEST")
+        with torch.no_grad():
+            mean_loss = 0
+            mean_diff = 0
+            for x, fx, yy in test_loader:
+                x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
+                loss = 0
+                diff = 0
+                for t in range(0, Tout):
+                    print(t)
+                    y = yy[..., t:t+1]
+
+                    #get the original slice
+                    sequen_solver.encoder.encode(pos, y)
+                    target_slice = sequen_solver.encoder.get_attention_slice()
+
+                    slice_from_vorticity = model.forward_from_vorticity(pos, fx)
+                    loss += F.mse_loss(slice_from_vorticity, target_slice)
+                    #slice_weights_gt.append(new_slice)
+                    
+                    #get the code from sequen solver
+                    code = sequen_solver.get_code(pos, fx, y)
+
+                    if t > 0:
+                        diff = F.mse_loss(slice_from_vorticity, prev_slice)
+                        print(f"diffrence prev current {diff}")
+                    #print(prev_slice_weight)
+                    #print(new_slice)
+                    prev_slice = slice_from_vorticity
+                    np_slice = slice_from_vorticity.cpu().numpy()[0,0]
+
+                    plt.imshow(np_slice, aspect='auto', cmap='viridis')
+                    plt.colorbar()
+                    plt.title("predicted")
+                    plt.xlabel("Columns (16)")
+                    plt.ylabel("Rows (4096)")
+                    plt.show()
+
+                    #show gt
+                    gt_slice = target_slice.cpu().numpy()[0,0]
+
+                    plt.imshow(gt_slice, aspect='auto', cmap='viridis')
+                    plt.colorbar()
+                    plt.title("gt")
+                    plt.xlabel("Columns (16)")
+                    plt.ylabel("Rows (4096)")
+                    plt.show()
+
+                    #reconstruct and update fx
+                    sequen_solver.slice_weights = slice_from_vorticity
+                    decoded = sequen_solver.decode(code)
+                    pred = sequen_solver.mlp2(sequen_solver.ln_3(decoded))
+                    fx = torch.cat((fx[..., 1:], pred), dim=-1)
+
+            
+                print(f"mean diffrence of simulation {diff}")
+                print(f"mean loss of simulation {loss}")
+                mean_loss += loss
+                mean_diff += diff
+            print(f"total mean difference {mean_diff/len(test_loader)}")
+            print(f"total mean loss {mean_loss/len(test_loader)}")
+    else:
+        losses = []
+        for ep in range(epochs):
+            print(f"ep: {ep}")
+            model.train()
+            loss_epoch = 0
+            print(f"train loader size {len(train_loader)}")
+            for i, (x, fx, yy) in enumerate(train_loader):
+                print(f"i {i}")
+                loss = 0
+                x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
+
+                #print(f"x {x.shape}, fx {fx.shape}, yy {yy.shape}")
+                loss = 0
+                for t in range(0, Tout):
+                    y = yy[..., t:t+1]
+
+                    #get the original slice
+                    sequen_solver.encoder.encode(pos, y)
+                    target_slice = sequen_solver.encoder.get_attention_slice()
+                
+                    slice_from_vorticity = model.forward_from_vorticity(pos, fx)
+                    loss += F.mse_loss(slice_from_vorticity, target_slice)
+
+                    #update fx
+                    fx = torch.cat((fx[..., 1:], y), dim=-1)
+
+                loss_epoch += loss
+                print(f"train loss {loss}")
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+            print(f"loss epoch {ep}: {loss_epoch} ")
+
+            if not os.path.exists('./sequential_checkpoints'):
+                os.makedirs('./sequential_checkpoints')
+            print('save model')
+            torch.save(model.state_dict(), os.path.join('./sequential_checkpoints', save_name + '.pt'))
+
+            model.eval()
+            print(f"TEST")
+            with torch.no_grad():
+                overall_loss = 0
+                print(f"test loader size {len(test_loader)}")
+                for x, fx, yy in test_loader:
+                    loss = 0
+                    x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
+
+                    for t in range(0, Tout):
+                        y = yy[..., t:t+1]
+
+                        #get the original slice
+                        sequen_solver.encoder.encode(pos, y)
+                        target_slice = sequen_solver.encoder.get_attention_slice()
+
+                        slice_from_vorticity = model.forward_from_vorticity(pos, fx)
+                        loss += F.mse_loss(slice_from_vorticity, target_slice)
+                    
+                    
+                    print(f"mean loss of a simulation {loss}")
+                    overall_loss += loss
+                #overall_loss /= len(test_loader)
+                print(f"overall loss {overall_loss}")
+
+
 if __name__ == "__main__":
-    train(eval=False)
-    #train_from_previous(eval=True)
+    #train(eval=False)
+    #train_from_previous(eval=False)
+    train_from_vorticity(eval=True)
