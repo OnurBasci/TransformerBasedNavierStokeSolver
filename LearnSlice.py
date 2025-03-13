@@ -77,14 +77,25 @@ class LearnSlice(nn.Module):
         else:
             self.fundemental += 2
         if use_code_for_vorticity:
-            self.fundemental += (self.M * self.C)
+            self.concatenated = n_hidden + (self.M * self.C)
+        else:
+            self.concatenated = n_hidden
         self.preprocess = MLP(self.fundemental, n_hidden * 2, n_hidden, n_layers=0, res=False, act=act).cuda()
         kernel = 3
         self.in_project_x = nn.Conv2d(n_hidden, n_hidden, kernel, 1, kernel // 2).cuda()
         self.softmax_vort = nn.Softmax(dim=-1).cuda()
-        self.in_project_slice = nn.Linear(n_hidden, self.M).cuda()
+        self.in_project_slice = MLP(self.concatenated, self.concatenated//2, self.M).cuda()
+        #self.in_project_slice = nn.Linear(self.concatenated, self.M).cuda()
         self.temperature = nn.Parameter(torch.ones([1, 1, 1, 1]) * 0.5).cuda()
-        
+
+        #modules to predict from vorticity + pos seperate
+        self.preprocess_seperate = MLP(106, 212, 64, n_layers=0, res=False, act=act).cuda()
+        kernel = 3
+        self.in_project_x_seperate = nn.Conv2d(64, 64, kernel, 1, kernel // 2).cuda()
+        self.softmax_vort_seperate = nn.Softmax(dim=-1).cuda()
+        self.in_project_slice_seperate = nn.Linear(64, 1).cuda()
+        self.temperature_seperate = nn.Parameter(torch.ones([1, 1, 1, 1]) * 0.5).cuda()
+
     
     def forward(self, code, spatial_pos):
         """
@@ -141,7 +152,7 @@ class LearnSlice(nn.Module):
         
         return slice_weight
     
-    def forward_from_vorticity(self, x, fx, code = None, T=None):
+    def forward_from_vorticity(self, x, fx, code = None):
         """
         x: [1, 4096, 64]
         fx: [1, 4096, 10]
@@ -150,10 +161,10 @@ class LearnSlice(nn.Module):
 
         if fx is not None:
             fx = torch.cat((x, fx), -1)
-            if code is not None:
+            """if code is not None:
                 code = code.reshape(code.shape[0], 1 ,code.shape[2]*code.shape[3]).contiguous() # B, 1, M, C -> B, 1, M * C
                 code = code.expand(-1, fx.shape[1], -1) #B, 1, M*C -> B, W*H, M*C
-                fx = torch.cat((fx, code), -1)
+                fx = torch.cat((fx, code), -1)"""
             fx = self.preprocess(fx) #the size of fx becomes B * N * C where C is the size of the embedded token from the article
         else:
             fx = self.preprocess(x)
@@ -163,9 +174,56 @@ class LearnSlice(nn.Module):
         B, N, C = fx.shape
         fx = fx.reshape(B, self.H, self.W, C).contiguous().permute(0, 3, 1, 2).contiguous()  # B C H W
         x_mid = self.in_project_x(fx).permute(0, 2, 3, 1).contiguous().reshape(B, N, 1, C) \
-            .permute(0, 2, 1, 3).contiguous()  # B H N G
+            .permute(0, 2, 1, 3).contiguous()  # B 1 N C
+        if code is not None:
+            code = code.reshape(code.shape[0], 1 , 1, code.shape[2]*code.shape[3]).contiguous() # B, 1, M, C -> B, 1, 1, M * C
+            code = self.z_score_normalization(code)
+            code = code.expand(-1, -1, x_mid.shape[2], -1)
+            x_mid = self.z_score_normalization(x_mid)
+            x_mid = torch.cat((x_mid, code), -1)
+            #print(f"x_mid {x_mid}")
         slice_weights = self.softmax_vort(
             self.in_project_slice(x_mid) / torch.clamp(self.temperature, min=0.1, max=5))  # B H N G
+
+        return slice_weights
+    
+    def z_score_normalization(self, x):
+        mean = torch.mean(x)
+        std = torch.std(x, unbiased=False)  # Use unbiased=False for population std
+
+        return (x - mean) / (std + 1e-8)  # Avoid division by zero
+        
+
+    
+    def forward_from_vorticity_seperate(self, x, fx, code):
+        """
+        x: [1, 4096, 64]
+        fx: [1, 4096, 10]
+        code: [1, 1, 16, 32]
+        """
+
+        slice_weights = None
+        for i in range(self.M):
+            if fx is not None:
+                fx_i = torch.cat((x, fx), -1)
+                
+                code_i = code[:,:,i,:] # B, 1, M, C -> B, 1, C
+                code_i = code_i.expand(-1, fx.shape[1], -1) #B, 1, M*C -> B, W*H, M*C
+                fx_i = torch.cat((fx_i, code_i), -1)
+                fx_i = self.preprocess_seperate(fx_i) 
+
+                #learn slices
+                B, N, C = fx_i.shape
+                fx_i = fx_i.reshape(B, self.H, self.W, C).contiguous().permute(0, 3, 1, 2).contiguous()  # B C H W
+                x_mid = self.in_project_x_seperate(fx_i).permute(0, 2, 3, 1).contiguous().reshape(B, N, 1, C) \
+                    .permute(0, 2, 1, 3).contiguous()  # B H N G
+                slice_weights_i = self.softmax_vort_seperate(
+                    self.in_project_slice_seperate(x_mid) / torch.clamp(self.temperature_seperate, min=0.1, max=5))  # B H N G
+                
+                if slice_weights == None:
+                    slice_weights = slice_weights_i
+                else:
+                    slice_weights = torch.cat((slice_weights, slice_weights_i), dim=-1)
 
         return slice_weights
 
@@ -734,7 +792,7 @@ def train_from_vorticity(eval=False):
     M = 16
 
     batch_size = 1
-    epochs = 2
+    epochs = 5
     lr = 0.001
     weight_decay = 1e-5
     save_name = "buff"
@@ -750,7 +808,7 @@ def train_from_vorticity(eval=False):
 
     unified_pos = 1
     use_vorticity = 1
-    use_code_for_vorticity = 0
+    use_code_for_vorticity = 1
     code_fx = None
 
     ntrain = 10
@@ -883,7 +941,6 @@ def train_from_vorticity(eval=False):
                 
                     #get the code from sequen solver
                     code = sequen_solver.get_code(x, fx, y)
-                    #print(f"code {code.shape}")
 
                     if use_code_for_vorticity:
                         code_fx = code
@@ -932,6 +989,7 @@ def train_from_vorticity(eval=False):
                         slice_from_vorticity = model.forward_from_vorticity(x, fx, code=code_fx)
                         loss += mse_loss(slice_from_vorticity, target_slice)
 
+
                         #reconstruct and update fx
                         sequen_solver.slice_weights = slice_from_vorticity
                         decoded = sequen_solver.decode(code)
@@ -948,4 +1006,4 @@ def train_from_vorticity(eval=False):
 if __name__ == "__main__":
     #train(eval=False)
     #train_from_previous(eval=False)
-    train_from_vorticity(eval=False)
+    train_from_vorticity(eval=True)
