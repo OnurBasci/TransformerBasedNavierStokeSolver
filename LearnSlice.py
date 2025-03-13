@@ -299,7 +299,7 @@ def buff():
     
 def load_data(ntrain, ntest, Tin, Tout):
     #load data
-    data_path = r"./data/fno/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -803,20 +803,20 @@ def train_from_vorticity(eval=False):
     M = 16
 
     batch_size = 1
-    epochs = 5
+    epochs = 10
     lr = 0.001
     weight_decay = 1e-5
 
     #save_name = "buff"
     #save_name = "buff2"
-    save_name = "slice_vort_ep10_sim200"
+    save_name = "slice_vorticity_code_ep10_sim200_b1"
 
     unified_pos = 1
     use_vorticity = 1
-    use_code_for_vorticity = 0
+    use_code_for_vorticity = 1
     code_fx = None
 
-    ntrain = 10
+    ntrain = 200
     ntest = 10
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
@@ -931,7 +931,7 @@ def train_from_vorticity(eval=False):
             loss_epoch = 0
             print(f"train loader size {len(train_loader)}")
             for i, (x, fx, yy) in enumerate(train_loader):
-                print(f"i {i}")
+                #print(f"i {i}")
                 loss = 0
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
 
@@ -957,13 +957,14 @@ def train_from_vorticity(eval=False):
                     fx = torch.cat((fx[..., 1:], y), dim=-1)
 
                 loss_epoch += loss
-                print(f"train loss {loss}")
+                #print(f"train loss {loss}")
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
             print(f"loss epoch {ep}: {loss_epoch} ")
-
+            losses.append(loss_epoch.item())
+            print(losses)
             if not os.path.exists('./sequential_checkpoints'):
                 os.makedirs('./sequential_checkpoints')
             print('save model')
