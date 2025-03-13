@@ -750,7 +750,8 @@ def train_from_vorticity(eval=False):
 
     unified_pos = 1
     use_vorticity = 1
-    use_code_for_vorticity = 1
+    use_code_for_vorticity = 0
+    code_fx = None
 
     ntrain = 10
     ntest = 10
@@ -813,7 +814,10 @@ def train_from_vorticity(eval=False):
                     #get the code from sequen solver
                     code = sequen_solver.get_code(x, fx, y)
 
-                    slice_from_vorticity = model.forward_from_vorticity(x, fx, code=None)
+                    if use_code_for_vorticity:
+                        code_fx = code
+
+                    slice_from_vorticity = model.forward_from_vorticity(x, fx, code=code_fx)
                     loss += mse_loss(slice_from_vorticity, target_slice)
                     #slice_weights_gt.append(new_slice)
                 
@@ -881,7 +885,10 @@ def train_from_vorticity(eval=False):
                     code = sequen_solver.get_code(x, fx, y)
                     #print(f"code {code.shape}")
 
-                    slice_from_vorticity = model.forward_from_vorticity(x, fx, code=code)
+                    if use_code_for_vorticity:
+                        code_fx = code
+
+                    slice_from_vorticity = model.forward_from_vorticity(x, fx, code=code_fx)
                     loss += mse_loss(slice_from_vorticity, target_slice)
 
                     #update fx
@@ -919,7 +926,10 @@ def train_from_vorticity(eval=False):
                         #get the code from sequen solver
                         code = sequen_solver.get_code(x, fx, y)
 
-                        slice_from_vorticity = model.forward_from_vorticity(x, fx, code=code)
+                        if use_code_for_vorticity:
+                            code_fx = code
+
+                        slice_from_vorticity = model.forward_from_vorticity(x, fx, code=code_fx)
                         loss += mse_loss(slice_from_vorticity, target_slice)
 
                         #reconstruct and update fx
