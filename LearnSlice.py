@@ -181,7 +181,6 @@ class LearnSlice(nn.Module):
             code = code.expand(-1, -1, x_mid.shape[2], -1)
             x_mid = self.z_score_normalization(x_mid)
             x_mid = torch.cat((x_mid, code), -1)
-            #print(f"x_mid {x_mid}")
         slice_weights = self.softmax_vort(
             self.in_project_slice(x_mid) / torch.clamp(self.temperature, min=0.1, max=5))  # B H N G
 
@@ -358,9 +357,9 @@ def train(eval = False):
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    #save_name = "slice_ep4_sim50_unified_vort"
+    save_name = "slice_ep4_sim50_unified_vort"
     #save_name = "buff"
-    save_name = "slice_ep5_sim50_unified_vort"
+    #save_name = "slice_ep5_sim50_unified_vort"
 
     ntrain = 50
     ntest = 10
@@ -405,6 +404,8 @@ def train(eval = False):
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, epochs=epochs,
                                                     steps_per_epoch=(len(train_loader)*Tout))
     
+    mse_loss = nn.MSELoss()
+
     if eval:
         print("evaluation mode")
         model.load_state_dict(torch.load("./sequential_checkpoints/" + save_name + ".pt", weights_only=True), strict=False)
@@ -412,11 +413,13 @@ def train(eval = False):
         print(f"TEST")
         with torch.no_grad():
             loss_overall = []
+            mean_loss_slice = 0
             for x, fx, yy in test_loader:
                 loss_sim = 0
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
                 original_x = x
                 loss_t = 0
+                loss_slice = 0
                 for t in range(0, Tout):
                     print(t)
                     y = yy[..., t:t+1]
@@ -428,18 +431,25 @@ def train(eval = False):
                     #get the code from sequen solver
                     code = sequen_solver.get_code(pos, fx, y)
 
-                    #GET AND SHOW THE PREDICTED SLICE
-                    """predicted_slice = model.get_slice_weight(code, original_x, fx, use_vorticity=use_vorticity)
+                    #get the original slice
+                    sequen_solver.encoder.encode(x, y)
+                    target_slice = sequen_solver.encoder.get_attention_slice()
 
-                    plt.imshow(predicted_slice.cpu().numpy()[0,0], aspect='auto', cmap='viridis')
+                    #GET AND SHOW THE PREDICTED SLICE
+                    predicted_slice = model.get_slice_weight(code, original_x, fx, use_vorticity=use_vorticity)
+
+                    loss_slice += mse_loss(predicted_slice, target_slice)
+                    """plt.imshow(predicted_slice.cpu().numpy()[0,0], aspect='auto', cmap='viridis')
                     plt.colorbar()
                     plt.title("Tensor Visualization")
                     plt.xlabel("Columns (16)")
                     plt.ylabel("Rows (4096)")
                     plt.show()"""
 
+                    #LOSS EVALUATION FOR EACH ROW
                     #for each position and slice we predict the weight
                     loss = 0
+                    """
                     for i in range(N):
                         #we compute the probabilities of all j for a given i
                         x = pos[0,i:i+1,:]
@@ -448,22 +458,23 @@ def train(eval = False):
                             x = x[0,i:i+1,:]
                         
                         w_i = model(code[0,0], x)
-                        loss += F.mse_loss(w_i, target_slice[0,0:1,i])
-                        #we compute the probabilities of all i andf j
-                        """for j in range(M):
-                            code_j = code[0,0,j,:]
-                            w_ij = model(code_j, pos_i)[0]
-                            print(f"w_ij {w_ij}")
-                            print(f"target_slice {target_slice[0,0,i,j]}")
-                            loss += F.mse_loss(w_ij, target_slice[0,0,i,j])"""
-                    if use_vorticity:
-                        fx = torch.cat((fx[..., 1:], y), dim=-1)
+                        loss += F.mse_loss(w_i, target_slice[0,0:1,i])"""
+                        
+                    sequen_solver.slice_weights = predicted_slice
+                    decoded = sequen_solver.decode(code)
+                    pred = sequen_solver.mlp2(sequen_solver.ln_3(decoded))
+                    fx = torch.cat((fx[..., 1:], pred), dim=-1)
+
                     #print(loss)
                     loss_t += loss
                 loss_sim = loss_t/Tout
                 loss_overall.append(loss_sim)
+                print(f"diff {loss_slice}")
+                mean_loss_slice += loss_slice
             mean_loss = sum(loss_overall)/len(loss_overall)
+            mean_loss_slice = mean_loss_slice/len(loss_overall)
             print(f"mean_loss {mean_loss}")
+            print(f"mean diff {mean_loss_slice}")
             print(f"loss by sim {loss_overall}")
     else:
         losses = []
@@ -795,20 +806,14 @@ def train_from_vorticity(eval=False):
     epochs = 5
     lr = 0.001
     weight_decay = 1e-5
-    save_name = "buff"
+
+    #save_name = "buff"
     #save_name = "buff2"
-    #save_name = "slice_ep2_sim20"
-    #save_name = "slice_ep2_sim20_unified"
-    #save_name = "slice_ep1_sim20_unified_vort"
-    #save_name = "slice_ep1_sim20_unified_vort2"
-    #save_name = "slice_learner_unified"
-    #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    #save_name = "slice_ep4_sim50_unified_vort"
-    #save_name = "slice_vort_ep10_sim200"
+    save_name = "slice_vort_ep10_sim200"
 
     unified_pos = 1
     use_vorticity = 1
-    use_code_for_vorticity = 1
+    use_code_for_vorticity = 0
     code_fx = None
 
     ntrain = 10
@@ -1004,6 +1009,6 @@ def train_from_vorticity(eval=False):
 
 
 if __name__ == "__main__":
-    #train(eval=False)
+    #train(eval=True)
     #train_from_previous(eval=False)
     train_from_vorticity(eval=True)
