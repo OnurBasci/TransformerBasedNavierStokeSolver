@@ -299,7 +299,7 @@ def buff():
     
 def load_data(ntrain, ntest, Tin, Tout):
     #load data
-    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/fno/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -348,7 +348,7 @@ def train(eval = False):
     M = 16
 
     batch_size = 1
-    epochs = 5
+    epochs = 1
     lr = 0.001
     weight_decay = 1e-5
     #save_name = "slice_ep2_sim20"
@@ -357,11 +357,12 @@ def train(eval = False):
     #save_name = "slice_ep1_sim20_unified_vort2"
     #save_name = "slice_learner_unified"
     #save_name = "slice_ep1_sim50_unified_vort_encoder_ep50"
-    save_name = "slice_ep4_sim50_unified_vort"
-    #save_name = "buff"
+    #save_name = "slice_ep4_sim50_unified_vort"
+    save_name = "buff"
     #save_name = "slice_ep5_sim50_unified_vort"
+    #save_name = "slice_ep10_sim75_unified_vort"
 
-    ntrain = 50
+    ntrain = 10
     ntest = 10
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
@@ -425,26 +426,16 @@ def train(eval = False):
                     y = yy[..., t:t+1]
 
                     #get the original slice
-                    sequen_solver.encoder.encode(pos, y)
+                    target_code = sequen_solver.encoder.encode(pos, y)
                     target_slice = sequen_solver.encoder.get_attention_slice()
 
                     #get the code from sequen solver
                     code = sequen_solver.get_code(pos, fx, y)
 
-                    #get the original slice
-                    sequen_solver.encoder.encode(x, y)
-                    target_slice = sequen_solver.encoder.get_attention_slice()
-
                     #GET AND SHOW THE PREDICTED SLICE
                     predicted_slice = model.get_slice_weight(code, original_x, fx, use_vorticity=use_vorticity)
 
                     loss_slice += mse_loss(predicted_slice, target_slice)
-                    """plt.imshow(predicted_slice.cpu().numpy()[0,0], aspect='auto', cmap='viridis')
-                    plt.colorbar()
-                    plt.title("Tensor Visualization")
-                    plt.xlabel("Columns (16)")
-                    plt.ylabel("Rows (4096)")
-                    plt.show()"""
 
                     #LOSS EVALUATION FOR EACH ROW
                     #for each position and slice we predict the weight
@@ -460,7 +451,7 @@ def train(eval = False):
                         w_i = model(code[0,0], x)
                         loss += F.mse_loss(w_i, target_slice[0,0:1,i])"""
                         
-                    sequen_solver.slice_weights = predicted_slice
+                    sequen_solver.slice_weights = target_slice
                     decoded = sequen_solver.decode(code)
                     pred = sequen_solver.mlp2(sequen_solver.ln_3(decoded))
                     fx = torch.cat((fx[..., 1:], pred), dim=-1)
@@ -539,6 +530,8 @@ def train(eval = False):
             loss_epoch /= len(train_loader)
             
             print(f"loss epoch {ep}: {loss_epoch}")
+            losses.append(loss_epoch.item())
+            print(losses)
             if not os.path.exists('./sequential_checkpoints'):
                 os.makedirs('./sequential_checkpoints')
             print('save model')
@@ -582,8 +575,10 @@ def train(eval = False):
                                 print(f"w_ij {w_ij}")
                                 print(f"target_slice {target_slice[0,0,i,j]}")
                                 loss += F.mse_loss(w_ij, target_slice[0,0,i,j])"""
-                        if use_vorticity:
-                            fx = torch.cat((fx[..., 1:], y), dim=-1)
+                        sequen_solver.slice_weights = target_slice
+                        decoded = sequen_solver.decode(code)
+                        pred = sequen_solver.mlp2(sequen_solver.ln_3(decoded))
+                        fx = torch.cat((fx[..., 1:], pred), dim=-1)
                         loss_t += loss
                         print(f"test loss {loss}")
                     loss_sim = loss_t/Tout
@@ -803,20 +798,21 @@ def train_from_vorticity(eval=False):
     M = 16
 
     batch_size = 1
-    epochs = 10
+    epochs = 5
     lr = 0.001
     weight_decay = 1e-5
 
     #save_name = "buff"
     #save_name = "buff2"
-    save_name = "slice_vorticity_code_ep10_sim200_b1"
+    #save_name = "slice_vort_ep10_sim200"
+    #save_name = "slice_vorticity_code_ep10_sim200_b1"
 
     unified_pos = 1
     use_vorticity = 1
     use_code_for_vorticity = 1
     code_fx = None
 
-    ntrain = 200
+    ntrain = 10
     ntest = 10
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
@@ -931,7 +927,7 @@ def train_from_vorticity(eval=False):
             loss_epoch = 0
             print(f"train loader size {len(train_loader)}")
             for i, (x, fx, yy) in enumerate(train_loader):
-                #print(f"i {i}")
+                print(f"i {i}")
                 loss = 0
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
 
@@ -957,14 +953,15 @@ def train_from_vorticity(eval=False):
                     fx = torch.cat((fx[..., 1:], y), dim=-1)
 
                 loss_epoch += loss
-                #print(f"train loss {loss}")
+                print(f"train loss {loss}")
+                losses.append(loss_epoch.item())
+                print(losses)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
             print(f"loss epoch {ep}: {loss_epoch} ")
-            losses.append(loss_epoch.item())
-            print(losses)
+
             if not os.path.exists('./sequential_checkpoints'):
                 os.makedirs('./sequential_checkpoints')
             print('save model')
@@ -1010,6 +1007,6 @@ def train_from_vorticity(eval=False):
 
 
 if __name__ == "__main__":
-    #train(eval=True)
+    train(eval=True)
     #train_from_previous(eval=False)
-    train_from_vorticity(eval=True)
+    #train_from_vorticity(eval=True)

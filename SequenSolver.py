@@ -179,7 +179,7 @@ class SequenSolver(nn.Module):
         output = self.mlp2(self.ln_3(decoded)) # B, N, C -> B, N, 1
         return output
     
-    def solve_with_slice_learner(self, slice_learner_path, spatial_pos, fx, y, unified_pos=0, use_vorticity=0,use_previous_slice=False, learn_from_vort = False):
+    def solve_with_slice_learner(self, slice_learner_path, spatial_pos, fx, y, unified_pos=0, use_vorticity=0,use_previous_slice=False, learn_from_vort = False, use_code_for_vorticity = False):
         #get sequential tokens
         B, _, _ = fx.shape
         tokens = torch.from_numpy(np.zeros((B, self.Head, self.T, self.M * self.C), dtype=np.float32)).cuda() # B H T M*C
@@ -187,6 +187,12 @@ class SequenSolver(nn.Module):
         #get tokens
         for i in range(self.T):
             token = self.encoder.encode(spatial_pos, fx[:,:,i:i+1])
+            """plt.imshow(token.cpu().numpy()[0,0], aspect='auto', cmap='viridis')
+            plt.colorbar()
+            plt.title(f"token time {i}")
+            plt.xlabel("Columns (32)")
+            plt.ylabel("Rows (16)")
+            plt.show()"""
             token = token.reshape(B, self.M * self.C).contiguous() #[B, H, 1, M*C]
             tokens[:, :, i, :] = token.unsqueeze(1) #[B, H, T, M*C]
 
@@ -200,7 +206,7 @@ class SequenSolver(nn.Module):
 
         #get the slice weigth with the slice learner
         #load and freeze the model
-        learn_slice_model = LearnSlice(unified_pos=unified_pos, use_vorticity=use_vorticity)
+        learn_slice_model = LearnSlice(unified_pos=unified_pos, use_vorticity=use_vorticity, use_code_for_vorticity=use_code_for_vorticity)
         learn_slice_model.load_state_dict(torch.load(slice_learner_path, weights_only=True), strict=False)
 
         learn_slice_model.eval()
@@ -214,14 +220,57 @@ class SequenSolver(nn.Module):
             self.slice_weights = learn_slice_model.forward_previous_slice(prev_slice_weight, token)
         elif learn_from_vort:
             print(f"spatial pos {spatial_pos.shape}")
-            self.slice_weights = learn_slice_model.forward_from_vorticity(spatial_pos, fx)
+            code_fx = None
+            if use_code_for_vorticity:
+                code_fx = code
+            self.slice_weights = learn_slice_model.forward_from_vorticity(spatial_pos, fx, code=code_fx)
         else:
             #get the slice weight with the transolver article method
             self.slice_weights = learn_slice_model.get_slice_weight(code, spatial_pos, fx, use_vorticity)
 
         #slice weight gt
-        self.encoder.encode(spatial_pos, y)
+        code_gt = self.encoder.encode(spatial_pos, y)
         slice_gt = self.encoder.get_attention_slice()
+
+        #DEBUG
+        print(f"code pred {code[0,0,:5,0]}")
+        print(f"code gt {code_gt[0,0,:5,0]}")
+        #get the vorticity field obtain from predicted code
+        self.slice_weights = slice_gt
+        decoded = self.decode(code) #B, N, C
+        vort_pred = self.mlp2(self.ln_3(decoded)) # B, N, C -> B, N, 1
+        vort_pred = vort_pred.reshape(64,64)
+
+        #get the vorticity from original code
+        decoded = self.encoder.decode(code_gt) #B, N, C
+        #vort_gt = self.mlp2(self.ln_3(decoded)) # B, N, C -> B, N, 1
+        vort_gt = decoded.reshape(64,64)
+        vort_gt_y = y.reshape(64,64)
+
+        print(f"vort pred {vort_pred[:5,0]}")
+        print(f"vort gt {vort_gt[:5,0]}")
+
+        plt.imshow(vort_pred.cpu().numpy(), aspect='auto', cmap='viridis')
+        plt.colorbar()
+        plt.title("predicted")
+        plt.xlabel("Columns (32)")
+        plt.ylabel("Rows (16)")
+        plt.show()
+
+        plt.imshow(vort_gt.cpu().numpy(), aspect='auto', cmap='viridis')
+        plt.colorbar()
+        plt.title("gt")
+        plt.xlabel("Columns (32)")
+        plt.ylabel("Rows (16)")
+        plt.show()
+
+        plt.imshow(vort_gt_y.cpu().numpy(), aspect='auto', cmap='viridis')
+        plt.colorbar()
+        plt.title("gt_y")
+        plt.xlabel("Columns (32)")
+        plt.ylabel("Rows (16)")
+        plt.show()
+
 
         #gt learned slice comp
         """print(f"slice gt {slice_gt.shape}")
@@ -431,6 +480,7 @@ def train(eval = False):
 
     unified_pos = 1
     use_vorticity = 1
+    use_code_for_vorticity = False
 
     #load data
     data_path = r"C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\data\\fno\\NavierStokes_V1e-5_N1200_T20\\NavierStokes_V1e-5_N1200_T20.mat"
@@ -494,7 +544,9 @@ def train(eval = False):
         model.eval()
 
         #slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\slice_ep1_sim20_unified_vort.pt"
-        slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\buff.pt"
+        #slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\buff.pt"
+        #slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\slice_vorticity_code_ep10_sim200_b1.pt"
+        slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\slice_ep10_sim75_unified_vort.pt"
 
         test_l2_full = 0
         with torch.no_grad():
@@ -506,7 +558,7 @@ def train(eval = False):
                     print(f"t {t}")
                     y = yy[..., t:t+1]
                     #im = model(x, fx, y, use_gt=True)
-                    im = model.solve_with_slice_learner(slice_learner_path, x, fx, y, unified_pos=unified_pos, use_vorticity=use_vorticity, use_previous_slice=True, learn_from_vort=False)
+                    im = model.solve_with_slice_learner(slice_learner_path, x, fx, y, unified_pos=unified_pos, use_vorticity=use_vorticity, use_previous_slice=False, learn_from_vort=False, use_code_for_vorticity=use_code_for_vorticity)
 
                     fx = torch.cat((fx[..., 1:], im), dim=-1)
                     if t == 0:

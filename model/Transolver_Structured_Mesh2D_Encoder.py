@@ -218,6 +218,9 @@ class Model(nn.Module):
     def get_attention_slice(self):
         return self.blocks[-1].Attn.slice_weights
     
+    def get_attention_code(self):
+        return self.blocks[-1].Attn.code
+
     def set_attention_slice(self, slice):
         self.blocks[-1].Attn.slice_weights = slice
     
