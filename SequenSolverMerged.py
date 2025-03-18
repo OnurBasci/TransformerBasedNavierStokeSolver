@@ -1,4 +1,5 @@
 """In this script we try to learn slice weight and code tokens together"""
+import argparse
 import torch
 import numpy as np
 import torch.nn as nn
@@ -12,6 +13,16 @@ import os
 #from SliceLearner import SliceLearner
 #from LearnSlice import LearnSlice
 import torch.nn.functional as F
+
+
+parser = argparse.ArgumentParser('Training Transformer')
+
+parser.add_argument('--eval', type=int, default=1)
+parser.add_argument('--epochs', type=int, default=10)
+parser.add_argument('--save_name', type=str, default='buff')
+
+args = parser.parse_args()
+
 
 ACTIVATION = {'gelu': nn.GELU, 'tanh': nn.Tanh, 'sigmoid': nn.Sigmoid, 'relu': nn.ReLU, 'leaky_relu': nn.LeakyReLU(0.1),
               'softplus': nn.Softplus, 'ELU': nn.ELU, 'silu': nn.SiLU}
@@ -318,21 +329,23 @@ def get_grid(batchsize=1):
 
 def train(eval = False):
 
+    print(f"args {args.eval}")
+
     batch_size = 1
-    epochs = 10
+    epochs = args.epochs
     lr = 0.001
     weight_decay = 1e-5
-    save_name = "buff"
+    save_name = args.save_name
 
     ntrain = 10
-    ntest = 2
+    ntest = 10
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
 
     unified_pos = 1
 
     #load data
-    data_path = r"C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\data\\fno\\NavierStokes_V1e-5_N1200_T20\\NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -377,7 +390,7 @@ def train(eval = False):
                                               batch_size=batch_size, shuffle=False)
     
     #get model
-    transolver_path = r"C:\Users\onurb\master\PRJ_4ID22_TP\Transolver\PDE-Solving-StandardBenchmark\sequential_checkpoints\encoder_ep20_head_1.pt"
+    transolver_path = r"./sequential_checkpoints/encoder_ep20_head_1.pt"
     model = SequenSolver(transolver_path, T=Tin, H=64, W=64, M=16, C=32, B=batch_size, layers=8).cuda()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
@@ -488,4 +501,4 @@ def train(eval = False):
 
 if __name__ == "__main__":
     #inference_example()
-    train(eval=True)
+    train(eval=args.eval)
