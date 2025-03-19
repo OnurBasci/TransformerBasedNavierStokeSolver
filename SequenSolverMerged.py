@@ -89,6 +89,7 @@ class SequenSolver(nn.Module):
         self.softmax_attention = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
 
+        self.mask = torch.tril(torch.ones(self.T, self.T, device='cuda'))
         self.slice_weights = torch.from_numpy(np.zeros((B, 1, self.N, self.M), dtype=np.float32)).cuda()
         self.slice_weights_t = 0    
 
@@ -134,6 +135,9 @@ class SequenSolver(nn.Module):
 
         #learn slice by like in the article
         #self.slice_weights = self.slice_learner(spatial_pos, fx)
+
+        #add positional encoding
+        tokens = self.add_positional_encoding(tokens)
 
         #attention
         for i in range(self.layers):
@@ -220,6 +224,22 @@ class SequenSolver(nn.Module):
         self.encoder.encode(spatial_pos, fx[:,:,-1:])
         return self.encoder.get_attention_slice()
 
+    def add_positional_encoding(self, tokens):
+        _, _, num_tokens, embed_dim = tokens.shape  # Extract shape
+
+        # Generate position indices: Shape (num_tokens, 1)
+        pos = torch.arange(num_tokens, dtype=torch.float).unsqueeze(1)  
+        div_term = 10000 ** (torch.arange(0, embed_dim, 2).float() / embed_dim)
+        pe = torch.zeros(num_tokens, embed_dim)
+        
+        # Apply sine and cosine
+        pe[:, 0::2] = torch.sin(pos / div_term)
+        pe[:, 1::2] = torch.cos(pos / div_term)
+
+        # Reshape to match input tensor (1, 1, num_tokens, embed_dim)
+        pe = pe.unsqueeze(0).unsqueeze(0)
+
+        return tokens + pe.to(tokens.device)
 
     def attention(self, tokens):
         #print(f"attention input {tokens.shape}")
@@ -230,8 +250,7 @@ class SequenSolver(nn.Module):
         dots = torch.matmul(q_slice_token, k_slice_token.transpose(-1, -2)) * self.scale
 
         #apply masking
-        mask = torch.tril(torch.ones(self.T, self.T, device=dots.device))
-        dots = dots.masked_fill(mask==0, float('-inf'))
+        dots = dots.masked_fill(self.mask==0, float('-inf'))
 
         attn = self.softmax_attention(dots)
         attn = self.dropout(attn)
