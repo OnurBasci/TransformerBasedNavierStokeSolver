@@ -15,15 +15,6 @@ import os
 import torch.nn.functional as F
 
 
-parser = argparse.ArgumentParser('Training Transformer')
-
-parser.add_argument('--eval', type=int, default=1)
-parser.add_argument('--epochs', type=int, default=10)
-parser.add_argument('--save_name', type=str, default='buff')
-
-args = parser.parse_args()
-
-
 ACTIVATION = {'gelu': nn.GELU, 'tanh': nn.Tanh, 'sigmoid': nn.Sigmoid, 'relu': nn.ReLU, 'leaky_relu': nn.LeakyReLU(0.1),
               'softplus': nn.Softplus, 'ELU': nn.ELU, 'silu': nn.SiLU}
 
@@ -237,6 +228,11 @@ class SequenSolver(nn.Module):
         k_slice_token = self.to_k(tokens)
         v_slice_token = self.to_v(tokens)
         dots = torch.matmul(q_slice_token, k_slice_token.transpose(-1, -2)) * self.scale
+
+        #apply masking
+        mask = torch.tril(torch.ones(self.T, self.T, device=dots.device))
+        dots = dots.masked_fill(mask==0, float('-inf'))
+
         attn = self.softmax_attention(dots)
         attn = self.dropout(attn)
         out_slice_token = torch.matmul(attn, v_slice_token)  # B H G D
@@ -337,7 +333,7 @@ def train(eval = False):
     weight_decay = 1e-5
     save_name = args.save_name
 
-    ntrain = 10
+    ntrain = args.sim_num
     ntest = 10
     Tin = 10 #the size of the input sequence
     Tout = 10 #the number of frames to predict
@@ -345,7 +341,7 @@ def train(eval = False):
     unified_pos = 1
 
     #load data
-    data_path = r"./data/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
+    data_path = r"./data/fno/NavierStokes_V1e-5_N1200_T20/NavierStokes_V1e-5_N1200_T20.mat"
     data = scio.loadmat(data_path)
     data = data['u'] #get the velocity component
 
@@ -501,4 +497,13 @@ def train(eval = False):
 
 if __name__ == "__main__":
     #inference_example()
+    parser = argparse.ArgumentParser('Training Transformer')
+
+    parser.add_argument('--eval', type=int, default=1)
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--save_name', type=str, default='buff')
+    parser.add_argument('--sim_num', type=int, default=10)
+
+    args = parser.parse_args()
+
     train(eval=args.eval)
