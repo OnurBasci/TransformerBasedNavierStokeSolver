@@ -426,12 +426,13 @@ def train(eval = False):
         #slice_learner_path = "C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\sequential_checkpoints\\slice_ep10_sim75_unified_vort.pt"
 
         test_l2_full = 0
+        test_first_loss = 0
         with torch.no_grad():
             for i, (x, fx, yy) in enumerate(test_loader):
                 print(f"i {i}")
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()  # x : B, 4096, 2  fx : B, 4096  y : B, 4096, T
                 bsz = x.shape[0]
-                for t in range(0, Tout):
+                for t in range(0, Tin):
                     print(f"t {t}")
                     y = yy[..., t:t+1]
                     im = model(x, fx, y, use_gt=False)
@@ -442,7 +443,9 @@ def train(eval = False):
                         pred = im
                     else:
                         pred = torch.cat((pred, im), -1)
+                #test_first_loss += myloss(pred.reshape(bsz, -1), yy[..., 0].reshape(bsz, -1)).item()
                 test_l2_full += myloss(pred.reshape(bsz, -1), yy.reshape(bsz, -1)).item()
+            #print(f"test last loss {test_first_loss/ntest}")
             print(test_l2_full / ntest)
 
     else:
@@ -485,28 +488,32 @@ def train(eval = False):
             test_l2_full = 0
 
             with torch.no_grad():
+                test_first_loss = 0
                 for x, fx, yy in test_loader:
                     loss = 0
                     x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()
                     bsz = x.shape[0]
-
+                    first_field = None
                     for t in range(0, Tout):
                         y = yy[..., t:t+1]
                         im = model(x, fx, y, use_gt=True)
                         loss += myloss(im.reshape(bsz, -1), y.reshape(bsz, -1))
                         if t == 0:
                             pred = im
+                            first_field = im
                         else:
                             pred = torch.cat((pred, im), -1)
                         fx = torch.cat((fx[..., 1:], im), dim=-1)
 
                     test_l2_step += loss.item()
+                    test_first_loss += myloss(first_field.reshape(bsz, -1), yy[..., 0].reshape(bsz, -1)).item()
                     test_l2_full += myloss(pred.reshape(bsz, -1), yy.reshape(bsz, -1)).item()    
 
                 print(
                     "Epoch {} , train_step_loss:{:.5f} , train_full_loss:{:.5f} , test_step_loss:{:.5f} , test_full_loss:{:.5f}".format(
                         ep, train_l2_step / ntrain / Tin, train_l2_full / ntrain, test_l2_step / ntest / Tin,
                             test_l2_full / ntest))
+                print(f"first frame loss {test_first_loss / ntest}")
                 
         if not os.path.exists('./sequential_checkpoints'):
             os.makedirs('./sequential_checkpoints')
