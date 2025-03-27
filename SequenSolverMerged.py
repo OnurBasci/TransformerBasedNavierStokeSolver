@@ -47,7 +47,7 @@ class MLP(nn.Module):
 
 class SequenSolver(nn.Module):
 
-    def __init__(self, transolver_path, T, W, H, M, C, B, mlp_ratio = 4, layers = 5, act='gelu',dropout=0.):
+    def __init__(self, transolver_path, T, W, H, M, C, B, sequential_head = 1, mlp_ratio = 4, layers = 5, act='gelu',dropout=0.):
         super(SequenSolver, self).__init__()
         self.T = T #sequence number
         self.W = W #width
@@ -60,6 +60,8 @@ class SequenSolver(nn.Module):
         self.scale = self.dim ** -0.5
         self.Head = 1 # Head is 1 for now
         self.layers = layers #number of repetion for the attention of sequences
+        self.sequential_head = sequential_head
+        self.seq_dim = self.dim//self.sequential_head
 
         #load transolver model
         self.encoder = Transolver_Structured_Mesh2D_Encoder.Model(space_dim=2,
@@ -83,9 +85,9 @@ class SequenSolver(nn.Module):
         for param in self.encoder.parameters():
             param.requires_grad = False
 
-        self.to_q = nn.Linear(self.dim, self.dim, bias=False)
-        self.to_k = nn.Linear(self.dim, self.dim, bias=False)
-        self.to_v = nn.Linear(self.dim, self.dim, bias=False)
+        self.to_q = nn.Linear(self.seq_dim, self.seq_dim, bias=False)
+        self.to_k = nn.Linear(self.seq_dim, self.seq_dim, bias=False)
+        self.to_v = nn.Linear(self.seq_dim, self.seq_dim, bias=False)
         self.softmax_attention = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
 
@@ -242,13 +244,12 @@ class SequenSolver(nn.Module):
         return tokens + pe.to(tokens.device)
 
     def attention(self, tokens):
-        #print(f"attention input {tokens.shape}")
+        head_tokens = tokens.reshape(self.B, self.sequential_head, self.T, self.seq_dim).contiguous()
         # Attention among sequential tokens
-        q_slice_token = self.to_q(tokens)
-        k_slice_token = self.to_k(tokens)
-        v_slice_token = self.to_v(tokens)
+        q_slice_token = self.to_q(head_tokens)
+        k_slice_token = self.to_k(head_tokens)
+        v_slice_token = self.to_v(head_tokens)
         dots = torch.matmul(q_slice_token, k_slice_token.transpose(-1, -2)) * self.scale
-
         #apply masking
         dots = dots.masked_fill(self.mask==0, float('-inf'))
 
@@ -256,7 +257,8 @@ class SequenSolver(nn.Module):
         attn = self.dropout(attn)
         out_slice_token = torch.matmul(attn, v_slice_token)  # B H G D
 
-        #print(f"attention output {out_slice_token.shape}")
+        #merge back the output of the attention
+        out_slice_token = out_slice_token.reshape(self.B, 1, self.T, self.dim).contiguous()
         return out_slice_token
 
 
@@ -406,7 +408,7 @@ def train(eval = False):
     
     #get model
     transolver_path = r"./sequential_checkpoints/encoder_ep20_head_1.pt"
-    model = SequenSolver(transolver_path, T=Tin, H=64, W=64, M=16, C=32, B=batch_size, layers=8).cuda()
+    model = SequenSolver(transolver_path, T=Tin, H=64, W=64, M=16, C=32, B=batch_size, layers=8, sequential_head=16).cuda()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, epochs=epochs,
@@ -428,12 +430,12 @@ def train(eval = False):
         test_l2_full = 0
         test_first_loss = 0
         with torch.no_grad():
+            print(f"tes {len(test_loader)}")
             for i, (x, fx, yy) in enumerate(test_loader):
                 print(f"i {i}")
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()  # x : B, 4096, 2  fx : B, 4096  y : B, 4096, T
                 bsz = x.shape[0]
                 for t in range(0, Tin):
-                    print(f"t {t}")
                     y = yy[..., t:t+1]
                     im = model(x, fx, y, use_gt=False)
                     #im = model.solve_with_slice_learner(slice_learner_path, x, fx, y, unified_pos=unified_pos, use_vorticity=use_vorticity, use_previous_slice=False, learn_from_vort=False, use_code_for_vorticity=use_code_for_vorticity)

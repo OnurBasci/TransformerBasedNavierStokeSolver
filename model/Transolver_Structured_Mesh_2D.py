@@ -203,9 +203,7 @@ class Model(nn.Module):
         if self.unified_pos:
             x = self.pos.repeat(x.shape[0], 1, 1, 1).reshape(x.shape[0], self.H * self.W, self.ref * self.ref)
         if fx is not None:
-            print(f"pre fx {fx.shape}")
             fx = torch.cat((x, fx), -1)
-            print(f"post fx {fx.shape}")
             fx = self.preprocess(fx) #the size of fx becomes B * N * C where C is the size of the embedded token from the article
         else:
             fx = self.preprocess(x)

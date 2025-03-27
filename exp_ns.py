@@ -38,7 +38,7 @@ print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}")
 data_path = r"C:\\Users\\onurb\\master\\PRJ_4ID22_TP\\Transolver\\PDE-Solving-StandardBenchmark\\data\\fno\\NavierStokes_V1e-5_N1200_T20\\NavierStokes_V1e-5_N1200_T20.mat"
 # data_path = args.data_path + '/NavierStokes_V1e-5_N1200_T20.mat'
 ntrain = 50
-ntest = 200
+ntest = 50
 T_in = 10
 T = 10
 step = 1
@@ -141,8 +141,6 @@ def main():
                 x, fx, yy = x.cuda(), fx.cuda(), yy.cuda()  # x : B, 4096, 2  fx : B, 4096  y : B, 4096, T
                 bsz = x.shape[0]
                 for t in range(0, T, step):
-                    print(f"x {x.shape}")
-                    print(f"fx {fx.shape}")
                     im = model(x, fx=fx)
 
                     fx = torch.cat((fx[..., step:], im), dim=-1)

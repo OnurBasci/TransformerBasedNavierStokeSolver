@@ -89,6 +89,7 @@ class Physics_Attention_Structured_Mesh_2D(nn.Module):
         # B N C
         B, N, C = x.shape
         x = x.reshape(B, self.H, self.W, C).contiguous().permute(0, 3, 1, 2).contiguous()  # B C H W
+
         ### (1) Slice
         fx_mid = self.in_project_fx(x).permute(0, 2, 3, 1).contiguous().reshape(B, N, self.heads, self.dim_head) \
             .permute(0, 2, 1, 3).contiguous()  # B H N C
